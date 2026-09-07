@@ -106,13 +106,15 @@ func cleanup() {
 }
 
 func startDockerStats(container string, outputFile *os.File) (*exec.Cmd, error) {
-	cmd := exec.Command(
-		"docker",
-		"stats",
-		"--format",
-		"{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.BlockIO}},{{.PIDs}}",
-		container,
-	)
+	dockerScript := fmt.Sprintf(`
+while true; do
+	docker stats --no-stream \
+		--format '{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.BlockIO}},{{.PIDs}}' \
+		%s
+done
+`, container)
+
+	cmd := exec.Command("bash", "-c", dockerScript)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -137,6 +139,10 @@ func startDockerStats(container string, outputFile *os.File) (*exec.Cmd, error) 
 				timestamp,
 				scanner.Text(),
 			)
+		}
+
+		if err := scanner.Err(); err != nil {
+			fmt.Println("docker stats error:", err)
 		}
 	}()
 
