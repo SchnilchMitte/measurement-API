@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,7 +25,7 @@ func startMeasurement(w http.ResponseWriter, r *http.Request) {
 
 	container := r.URL.Query().Get("container")
 	if container != "kafka" && container != "nats" {
-		http.Error(w, "use ?container=kafka or ?container=nats", 400)
+		http.Error(w, "good try", 400)
 		return
 	}
 
@@ -40,26 +41,21 @@ func startMeasurement(w http.ResponseWriter, r *http.Request) {
 
 	// Take one docker stats sample every second and add our own timestamp.
 	// The container name is safe because we only accept "kafka" or "nats" above.
-	dockerScript := fmt.Sprintf(`while true; do
-	printf "%%s," "$(date --iso-8601=ns)"
-	docker stats --no-stream --format '{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.BlockIO}},{{.PIDs}}' %s
-	sleep 1
-done`, container)
 
-	dockerStats = exec.Command("bash", "-c", dockerScript)
-	dockerStats.Stdout = containerFile
-	dockerStats.Stderr = containerFile
+	// Start continuous Docker stats stream.
+	var err error
 
-	// Measure CPU, RAM, network and disk of the complete server every second.
-	sar = exec.Command("sar", "-u", "-r", "-n", "DEV", "-d", "-p", "1")
-	sar.Stdout = hostFile
-	sar.Stderr = hostFile
-
-	if err := dockerStats.Start(); err != nil {
+	dockerStats, err = startDockerStats(container, containerFile)
+	if err != nil {
 		cleanup()
 		http.Error(w, err.Error(), 500)
 		return
 	}
+
+	// Measure CPU, RAM, network and disk of the complete server every second.
+	sar = exec.Command("sar", "-u", "-r", "-d", "1")
+	sar.Stdout = hostFile
+	sar.Stderr = hostFile
 
 	if err := sar.Start(); err != nil {
 		_ = dockerStats.Process.Kill()
@@ -109,6 +105,44 @@ func cleanup() {
 	hostFile = nil
 }
 
+func startDockerStats(container string, outputFile *os.File) (*exec.Cmd, error) {
+	cmd := exec.Command(
+		"docker",
+		"stats",
+		"--format",
+		"{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.BlockIO}},{{.PIDs}}",
+		container,
+	)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd.Stderr = outputFile
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+
+		for scanner.Scan() {
+			timestamp := time.Now().Format(time.RFC3339Nano)
+
+			fmt.Fprintf(
+				outputFile,
+				"%s,%s\n",
+				timestamp,
+				scanner.Text(),
+			)
+		}
+	}()
+
+	return cmd, nil
+}
+
 func main() {
 	os.MkdirAll("measurements", 0755)
 
@@ -120,5 +154,5 @@ func main() {
 	fmt.Println("NATS:  curl 'http://127.0.0.1:7070/start?container=nats'")
 	fmt.Println("Stop:  curl 'http://127.0.0.1:7070/stop'")
 
-	http.ListenAndServe("127.0.0.1:7070", nil)
+	http.ListenAndServe("94.130.136.176:7070", nil)
 }
