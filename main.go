@@ -29,6 +29,7 @@ func startMeasurement(w http.ResponseWriter, r *http.Request) {
 	}
 
 	container := r.URL.Query().Get("container")
+	runName := r.URL.Query().Get("source_file")
 
 	if container != "kafka" &&
 		container != "nats" &&
@@ -42,7 +43,7 @@ func startMeasurement(w http.ResponseWriter, r *http.Request) {
 
 	resultDir = filepath.Join(
 		"measurements",
-		container+"-"+startTime.Format("20060102-150405"),
+		container+"-SRC__"+runName,
 	)
 
 	if err := os.MkdirAll(resultDir, 0755); err != nil {
