@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,6 +23,8 @@ var natsFile *os.File
 var hostFile *os.File
 
 var resultDir string
+var runName string
+var container string
 
 func startMeasurement(w http.ResponseWriter, r *http.Request) {
 	if kafkaStats != nil || natsStats != nil {
@@ -28,8 +32,8 @@ func startMeasurement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	container := r.URL.Query().Get("container")
-	runName := r.URL.Query().Get("source_file")
+	container = r.URL.Query().Get("container")
+	runName = r.URL.Query().Get("source_file")
 
 	if container != "kafka" &&
 		container != "nats" &&
@@ -190,6 +194,47 @@ func stopMeasurement(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dir := resultDir
+
+	if kafkaFile != nil {
+		_ = kafkaFile.Sync()
+		_ = kafkaFile.Close()
+		kafkaFile = nil
+	}
+
+	if natsFile != nil {
+		_ = natsFile.Sync()
+		_ = natsFile.Close()
+		natsFile = nil
+	}
+
+	if hostFile != nil {
+		_ = hostFile.Sync()
+		_ = hostFile.Close()
+		hostFile = nil
+	}
+
+	importErr := ImportMeasurement(
+		context.Background(),
+		dir,
+		container,
+		runName,
+	)
+
+	if importErr != nil {
+		log.Printf(
+			"resource import failed for %s: %v",
+			runName,
+			importErr,
+		)
+
+		http.Error(
+			w,
+			"measurement stopped, but DB import failed: "+
+				importErr.Error(),
+			http.StatusInternalServerError,
+		)
+		return
+	}
 
 	cleanup()
 
